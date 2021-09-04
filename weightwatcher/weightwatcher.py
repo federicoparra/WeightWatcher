@@ -2872,7 +2872,7 @@ class WeightWatcher(object):
           #smoothedMatrix = X @ V.T
             
         elif methodSelectComponents == "localization_ratio":
-          threshold = 90
+          threshold = percent
         
           if not doPlot:
               # Get eigenvalues from matrix
@@ -2890,7 +2890,7 @@ class WeightWatcher(object):
           smoothedMatrix = U @ (dm @ Vt)
 
         elif methodSelectComponents == "vector_entropy":
-          threshold = 90
+          threshold = percent
                  
           # Get eigenvalues from matrix
           eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
@@ -2907,7 +2907,7 @@ class WeightWatcher(object):
           smoothedMatrix = U @ (dm @ Vt)
 
         elif methodSelectComponents == "participation_ratio":
-          threshold = 90
+          threshold = percent
         
           # Get eigenvalues from matrix
           eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
