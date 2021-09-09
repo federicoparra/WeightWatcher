@@ -36,6 +36,8 @@ import pyRMT
 
 import sklearn
 from sklearn.decomposition import TruncatedSVD
+
+import scipy as sp
     
 import random
 
@@ -2664,6 +2666,8 @@ class WeightWatcher(object):
         params['layers'] = layers
         params['percent'] = percent
 
+        D = None
+        
         # check framework, return error if framework not supported
         # need to access static method on  Model class
 
@@ -2679,7 +2683,6 @@ class WeightWatcher(object):
         vectorNumber = 0
  
         weightVectors = []
-        mu = []
         sd = []
 
         # iterate over layers        
@@ -2702,9 +2705,9 @@ class WeightWatcher(object):
                             weightVectors.append(np.reshape(weights[:,:,inputChannel,kernelFilter],(weights[:,:,inputChannel,kernelFilter].size)))
 
                             if normalizeVectors:
-                                mu.append(np.mean(weightVectors[vectorNumber]))
-                                sd.append(np.std(weightVectors[vectorNumber]))
-                                weightVectors[vectorNumber] = np.divide((weightVectors[vectorNumber] - mu[vectorNumber]), sd[vectorNumber])
+                                #sd.append(np.linalg.norm(weights[:,:,inputChannel,kernelFilter]))
+                                sd.append(sp.stats.median_abs_deviation(weightVectors[vectorNumber]))
+                                weightVectors[vectorNumber] = np.divide(weightVectors[vectorNumber], sd[vectorNumber])
 
                             vectorNumber += 1;
  
@@ -2713,9 +2716,9 @@ class WeightWatcher(object):
                         weightVectors.append(biases)
 
                         if normalizeVectors:
-                            mu.append(np.mean(weightVectors[vectorNumber]))
-                            sd.append(np.std(weightVectors[vectorNumber]))
-                            weightVectors[vectorNumber] = np.divide((weightVectors[vectorNumber] - mu[vectorNumber]), sd[vectorNumber])
+                            #sd.append(np.linalg.norm(weightVectors[vectorNumber]))
+                            sd.append(sp.stats.median_abs_deviation(weightVectors[vectorNumber]))
+                            weightVectors[vectorNumber] = np.divide(weightVectors[vectorNumber], sd[vectorNumber])
 
                         vectorNumber += 1;
  
@@ -2724,9 +2727,9 @@ class WeightWatcher(object):
                     weightVectors.append(np.reshape(weights, (weights.size)))
 
                     if normalizeVectors:
-                        mu.append(np.mean(weightVectors[vectorNumber]))
-                        sd.append(np.std(weightVectors[vectorNumber]))
-                        weightVectors[vectorNumber] = np.divide((weightVectors[vectorNumber] - mu[vectorNumber]), sd[vectorNumber])
+                        #sd.append(np.linalg.norm(weights))
+                        sd.append(sp.stats.median_abs_deviation(weightVectors[vectorNumber]))
+                        weightVectors[vectorNumber] = np.divide(weightVectors[vectorNumber], sd[vectorNumber])
 
                     vectorNumber += 1;
 
@@ -2735,9 +2738,9 @@ class WeightWatcher(object):
                         weightVectors.append(biases)
 
                         if normalizeVectors:
-                            mu.append(np.mean(weightVectors[vectorNumber]))
-                            sd.append(np.std(weightVectors[vectorNumber]))
-                            weightVectors[vectorNumber] = np.divide((weightVectors[vectorNumber] - mu[vectorNumber]), sd[vectorNumber])
+                            #sd.append(np.linalg.norm(weightVectors[vectorNumber]))
+                            sd.append(sp.stats.median_abs_deviation(weightVectors[vectorNumber]))
+                            weightVectors[vectorNumber] = np.divide(weightVectors[vectorNumber], sd[vectorNumber])
 
                         vectorNumber += 1;    
                 
@@ -2757,6 +2760,12 @@ class WeightWatcher(object):
         # reshapes long 1D vector (plus padding if need be) into a square matrix 
         weightMatrix = np.reshape(np.hstack([weightVector, np.zeros(padding)]),(squareSize,squareSize))
         logger.info("Unified matrix is of size " + str(weightMatrix.shape[0]) + "x" + str(weightMatrix.shape[1]))
+                
+        # sometimes when we normalize the vectors in the first part of the code, some values end being inf or nans because of division by 0 etc
+        # we change those values to zero here
+        if normalizeVectors:
+            weightMatrix[np.isinf(weightMatrix)] = 0
+            weightMatrix[np.isnan(weightMatrix)] = 0
 
         if doPlot:
             # create shuffled version of unified matrix
@@ -2766,9 +2775,11 @@ class WeightWatcher(object):
             shuffledMatrix = np.reshape(matrix_as_vector[indexes], weightMatrix.shape)
             
             # Get eigenvalues from matrix
-            _, eigenVectors = np.linalg.eig(weightMatrix)
-            eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
-            shuffledEigenValues = np.power(sp.linalg.svdvals(shuffledMatrix),2) #get_shuffled_eigenvalues(weightMatrix, num=10)
+            eigenValues, eigenVectors = np.linalg.eig(np.dot(weightMatrix.T, weightMatrix))
+            #eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
+            shuffledEigenValues, _ = np.linalg.eig(np.dot(shuffledMatrix.T, shuffledMatrix)) #np.power(sp.linalg.svdvals(np.dot(shuffledMatrix.T, shuffledMatrix),2) #get_shuffled_eigenvalues(weightMatrix, num=10)
+           
+            # Get singular values
             singularValues = np.sqrt(eigenValues)
             shuffledSingularValues = np.sqrt(shuffledEigenValues)
           
@@ -2781,29 +2792,35 @@ class WeightWatcher(object):
             locRatios = [localization_ratio(ev) for ev in eigenVectors]
             eigenVectorsIndexes = np.arange(0, len(eigenVectors)) 
                               
-            axes[-2].scatter(eigenVectorsIndexes, locRatios, label="LocRatios")
-            axes[-2].set_title("Localization ratios of eigenvectors")
-            axes[-2].legend()
+            #axes[-2].scatter(eigenVectorsIndexes, locRatios, label="LocRatios")
+            #axes[-2].set_title("Localization ratios of eigenvectors")
+            #axes[-2].legend()
 
-            axes[-1].hist(singularValues, bins=100, label="QC", color="blue", density=True)
-            axes[-1].hist(shuffledSingularValues, bins=100, label="Random QC", color="red", density=True, alpha=0.5)
-            axes[-1].set_title("Singular values vs randomized singular values")
+            # filter outliers?
+            #singularValues[singularValues > 0.25] = 0 # np.percentile(singularValues, 20)] = 0
+
+            #axes[-1].hist(singularValues, bins=100, label="QC", color="blue", density=True)
+            #axes[-1].hist(shuffledSingularValues, bins=100, label="Random QC", color="red", density=True, alpha=0.5)
+            #axes[-1].set_title("Singular values vs randomized singular values")
+            #axes[-1].legend()
+            
+            #axes[-0].hist(np.log10(eigenValues), bins=100, label="ESD", color="blue", density=True)
+            #axes[-0].hist(np.log10(shuffledEigenValues), bins=100, label="Random ESD", color="red", alpha=0.5, density=True) 
+            
+            #axes[-0].hist(eigenValues, bins=100, label="ESD", color="blue", density=True)
+            #axes[-0].hist(shuffledEigenValues, bins=100, label="Random ESD", color="red", alpha=0.5, density=True) 
+            #axes[-0].set_title("ESD vs randomized ESD")
+            #axes[-0].legend()
+            
+            axes[-1].hist(eigenValues, bins=100, label="ESD", color="blue", density=True)
+            axes[-1].hist(shuffledEigenValues, bins=100, label="Random ESD", color="red", alpha=0.5, density=True) 
+            axes[-1].set_title("ESD vs randomized ESD")
             axes[-1].legend()
             
-            axes[-0].hist(np.log10(eigenValues), bins=100, label="ESD", color="blue", density=True)
-            axes[-0].hist(np.log10(shuffledEigenValues), bins=100, label="Random ESD", color="red", alpha=0.5, density=True) 
-            axes[-0].set_title("ESD vs randomized ESD")
-            axes[-0].legend()
-                
             if doShowAndClf:
                 plt.show()
                 plt.clf()        
 
-        # sometimes when we normalize the vectors in the first part of the code, some values end being inf or nans because of division by 0 etc
-        # we change those values to zero here
-        if normalizeVectors:
-            weightMatrix[np.isinf(weightMatrix)] = 0
-            weightMatrix[np.isnan(weightMatrix)] = 0
 
         # Now we need to find out the right amount of components and perform low rank decomposition   
         if methodSelectComponents == "powerlaw_xmin":
@@ -2811,8 +2828,10 @@ class WeightWatcher(object):
               # Get eigenvalues from matrix
               eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
 
-          xmin = self.fit_powerlaw(eigenValues, plot=doPlot, savefig=False, ax = axes)[1]
-
+          powerlawFit = self.fit_powerlaw(eigenValues, plot=doPlot, savefig=False, ax = axes)
+          xmin = powerlawFit[1]
+          D = powerlawFit[3]
+            
           nComponents = np.sum(eigenValues >= xmin) 
 
           # do truncated SVD for smoothing weights in matrix    
@@ -2876,7 +2895,7 @@ class WeightWatcher(object):
         
           if not doPlot:
               # Get eigenvalues from matrix
-              eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
+              eigenValues, eigenVectors = np.linalg.eig(np.dot(weightMatrix.T, weightMatrix))
               locRatios = [localization_ratio(ev) for ev in eigenVectors]
             
           arrayLocRatios = np.array(locRatios)
@@ -2893,7 +2912,7 @@ class WeightWatcher(object):
           threshold = percent
                  
           # Get eigenvalues from matrix
-          eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
+          eigenValues, eigenVectors = np.linalg.eig(np.dot(weightMatrix.T, weightMatrix))
           vecEntropy = [vector_entropy(ev) for ev in eigenVectors]
 
           arrayVecEntropy = np.array(vecEntropy)
@@ -2910,7 +2929,7 @@ class WeightWatcher(object):
           threshold = percent
         
           # Get eigenvalues from matrix
-          eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
+          eigenValues, eigenVectors = np.linalg.eig(np.dot(weightMatrix.T, weightMatrix))
           partRatios = [participation_ratio(ev) for ev in eigenVectors]
 
           arrayPartRatios = np.array(partRatios)
@@ -3019,7 +3038,7 @@ class WeightWatcher(object):
 
         #TODO: restrict to ww2x or intra
         layer_iterator = self.make_layer_iterator(model=model, layers=layers, params=params)            
-
+        
         vectorNumber = 0;
         vectorIndex = 0;
 
@@ -3048,7 +3067,7 @@ class WeightWatcher(object):
                             weights[:,:,inputChannel,kernelFilter] = np.reshape(smoothedVector[vectorIndex:vectorIndex + weightVectors[vectorNumber].size], weights[:,:,inputChannel,kernelFilter].shape)
 
                             if normalizeVectors:
-                                weights[:,:,inputChannel,kernelFilter] = np.multiply(weights[:,:,inputChannel,kernelFilter], sd[vectorNumber]) + mu[vectorNumber]
+                                weights[:,:,inputChannel,kernelFilter] = np.multiply(weights[:,:,inputChannel,kernelFilter], sd[vectorNumber])
 
                             vectorIndex = vectorIndex + weightVectors[vectorNumber].size
 
@@ -3060,7 +3079,7 @@ class WeightWatcher(object):
                         biases = smoothedVector[vectorIndex:vectorIndex + weightVectors[vectorNumber].size]
 
                         if normalizeVectors:
-                            biases = np.multiply(biases, sd[vectorNumber]) + mu[vectorNumber]
+                            biases = np.multiply(biases, sd[vectorNumber])
 
                         vectorIndex = vectorIndex + weightVectors[vectorNumber].size
 
@@ -3073,7 +3092,7 @@ class WeightWatcher(object):
                     weights = np.reshape(smoothedVector[vectorIndex:vectorIndex + weightVectors[vectorNumber].size], weights.shape)
 
                     if normalizeVectors:
-                        weights = np.multiply(weights, sd[vectorNumber]) + mu[vectorNumber]
+                        weights = np.multiply(weights, sd[vectorNumber])
 
                     vectorIndex = vectorIndex + weightVectors[vectorNumber].size
 
@@ -3084,7 +3103,7 @@ class WeightWatcher(object):
                         biases = smoothedVector[vectorIndex:vectorIndex + weightVectors[vectorNumber].size]
 
                         if normalizeVectors:
-                            biases = np.multiply(biases, sd[vectorNumber]) + mu[vectorNumber]
+                            biases = np.multiply(biases, sd[vectorNumber])
 
                         vectorIndex = vectorIndex + weightVectors[vectorNumber].size
 
@@ -3094,4 +3113,521 @@ class WeightWatcher(object):
                                         
         # if model was passed, then it's redundant to return smoothed model - since model was passed by reference, the model has already been smoothed. 
         # If that's undesired, one should do a copy of the model before calling this method
-        return(model, nComponents)
+        return(model, nComponents, D)
+    
+    def stackedSVDSmoothing(self, model=None, percent=0.2, ww2x=False, methodSelectComponents = "powerlaw_xmin", layers=[], smoothBias = True, doPlot = False, axes = None):
+        """Apply the Unified SVD Smoothing Transform (PARRA, 2021) to model; select components based on fixed percent of eigenvalues, or powerlaw_xmin, powerlaw_spikes, or mp_spikes
+
+        layers:
+            List of layer ids. If empty, analyze all layers (default)
+            If layer ids < 0, then skip the layers specified
+            All layer ids must be > 0 or < 0
+
+        ww2x:
+            Use weightwatcher version 0.2x style iterator, which slices up Conv2D layers in N=rf matrices
+
+        """
+
+        model = model or self.model   
+
+        params=DEFAULT_PARAMS
+        params['ww2x'] = ww2x
+        params['layers'] = layers
+        params['percent'] = percent
+
+        # check framework, return error if framework not supported
+        # need to access static method on  Model class
+
+        logger.info("params {}".format(params))
+        if not self.valid_params(params):
+            msg = "Error, params not valid: \n {}".format(params)
+            logger.error(msg)
+            raise Exception(msg)
+
+
+        # FIRST, ITERATE OVER ALL LAYERS TO LEARN THE SIZE OF THE STACKED-MATRIX-CONTAINER
+
+        #TODO: restrict to ww2x or intra
+        layer_iterator = self.make_layer_iterator(model=model, layers=layers, params=params)            
+
+        MAX_HEIGHT = 0
+        MAX_WIDTH = 0
+
+        # iterate over layers        
+        for ww_layer in layer_iterator:
+            if not ww_layer.skipped and ww_layer.has_weights:
+                logger.info("LAYER: {} {}  : {}".format(ww_layer.layer_id, ww_layer.the_type, type(ww_layer.layer)))
+
+                layer_type = ww_layer.the_type
+
+                # get the model weights and biases directly, converted to numpy arrays        
+                has_weights, weights, has_biases, biases = ww_layer.get_weights_and_biases()    
+
+                # iterate over weight matrices
+                if layer_type is LAYER_TYPE.CONV2D:
+
+                    kernelHeight = weights.shape[0]
+                    kernelWidth = weights.shape[1]
+                    inputsNumber = weights.shape[2]
+                    kernelNumber = weights.shape[3]
+                    
+                    if MAX_WIDTH < kernelWidth * kernelNumber * inputsNumber:
+                        MAX_WIDTH = kernelWidth * kernelNumber * inputsNumber
+
+                    MAX_HEIGHT += kernelHeight
+                    
+                    if smoothBias and has_biases:
+                        if MAX_WIDTH < biases.shape[0]:
+                            MAX_WIDTH = biases.shape[0]
+
+                        MAX_HEIGHT += 1
+
+                elif layer_type is LAYER_TYPE.DENSE:
+
+                    if MAX_WIDTH < weights.shape[1]:
+                        MAX_WIDTH = weights.shape[1]
+
+                    MAX_HEIGHT += weights.shape[0]
+
+                    if smoothBias and has_biases:
+                        if MAX_WIDTH < biases.shape[0]:
+                            MAX_WIDTH = biases.shape[0]
+
+                        MAX_HEIGHT += 1
+
+        # for now - make it square:
+        #if MAX_HEIGHT > MAX_WIDTH:
+        #    MAX_WIDTH = MAX_HEIGHT
+        #elif MAX_WIDTH > MAX_HEIGHT:
+        #    MAX_HEIGHT = MAX_WIDTH
+                        
+        # now create the zeroed stacked matrix
+        stackedMatrix = np.zeros((MAX_HEIGHT, MAX_WIDTH))
+        print("Size of zeroed stackedMatrix is", stackedMatrix.shape)
+
+        # now lets fill the stacked matrix (which is "auto padded" by the zeros above)     
+
+        #TODO: restrict to ww2x or intra
+        layer_iterator = self.make_layer_iterator(model=model, layers=layers, params=params)            
+
+        rowNumber = 0
+        columnNumber = 0
+
+        matrixNumber = 0
+
+        sd = []
+
+        # iterate over layers        
+        for ww_layer in layer_iterator:
+            if not ww_layer.skipped and ww_layer.has_weights:
+                logger.info("LAYER: {} {}  : {}".format(ww_layer.layer_id, ww_layer.the_type, type(ww_layer.layer)))
+
+                layer_type = ww_layer.the_type
+
+                # get the model weights and biases directly, converted to numpy arrays        
+                has_weights, weights, has_biases, biases = ww_layer.get_weights_and_biases()    
+
+                # iterate over weight matrices
+                if layer_type is LAYER_TYPE.CONV2D:
+
+                    kernelHeight = weights.shape[0]
+                    kernelWidth = weights.shape[1]
+
+                    for inputChannel in range(0,weights.shape[2]):
+
+                        for kernel in range(0,weights.shape[3]):
+
+                            sd.append(sp.stats.median_abs_deviation(weights[:,:,inputChannel,kernel]))
+                            
+                            stackedMatrix[rowNumber:rowNumber + kernelHeight, columnNumber:columnNumber + kernelWidth] = np.divide(weights[:,:,inputChannel,kernel], sd[matrixNumber]) 
+
+                            columnNumber += kernelWidth
+
+                            matrixNumber += 1
+                            
+                    rowNumber += kernelHeight
+
+                    columnNumber = 0
+
+                    if smoothBias and has_biases:
+                        sd.append(sp.stats.median_abs_deviation(biases))
+                        stackedMatrix[rowNumber, columnNumber:biases.shape[0]] = np.divide(biases, sd[matrixNumber])
+
+                        matrixNumber +=1
+
+                        rowNumber += 1
+
+                        columnNumber = 0
+
+                elif layer_type is LAYER_TYPE.DENSE:
+
+                    weightsHeight = weights.shape[0]
+                    weightsWidth = weights.shape[1]
+
+                    sd.append(sp.stats.median_abs_deviation(weights))
+
+                    stackedMatrix[rowNumber:rowNumber + weightsHeight, columnNumber:columnNumber + weightsWidth] = np.divide(weights, sd[matrixNumber])  
+
+                    matrixNumber += 1
+
+                    rowNumber += 1
+
+                    columnNumber = 0
+
+                    if smoothBias and has_biases:
+
+                        sd.append(sp.stats.median_abs_deviation(biases))
+                        stackedMatrix[rowNumber, columnNumber:biases.shape[0]] = np.divide(biases, sd[matrixNumber])
+
+                        matrixNumber +=1
+
+                        rowNumber += 1
+
+                        columnNumber = 0
+
+        # SMOOTH WEIGHTS OF STACKED MATRIX
+
+        weightMatrix = stackedMatrix
+
+        logger.info("Stacked matrix is of size " + str(weightMatrix.shape[0]) + "x" + str(weightMatrix.shape[1]))
+        print("Stacked matrix is of size " + str(weightMatrix.shape[0]) + "x" + str(weightMatrix.shape[1]))
+
+        # sometimes when we normalize the vectors in the first part of the code, some values end being inf or nans because of division by 0 etc
+        # we change those values to zero here
+        weightMatrix[np.isinf(weightMatrix)] = 0
+        weightMatrix[np.isnan(weightMatrix)] = 0
+
+        if doPlot:
+            # create shuffled version of unified matrix
+            matrix_as_vector = np.reshape(weightMatrix, weightMatrix.size)
+            indexes = np.arange(0,matrix_as_vector.size).tolist()
+            random.shuffle(indexes)
+            shuffledMatrix = np.reshape(matrix_as_vector[indexes], weightMatrix.shape)
+
+            # Get eigenvalues from matrix
+            _, eigenVectors = np.linalg.eig(weightMatrix)
+            eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
+            shuffledEigenValues = np.power(sp.linalg.svdvals(shuffledMatrix),2) #get_shuffled_eigenvalues(weightMatrix, num=10)
+            singularValues = np.sqrt(eigenValues)
+            shuffledSingularValues = np.sqrt(shuffledEigenValues)
+
+            doShowAndClf = False
+
+            if axes is None:
+                doShowAndClf = True
+                fig, axes = plt.subplots(3, figsize=(10,30))            
+
+            locRatios = [localization_ratio(ev) for ev in eigenVectors]
+            eigenVectorsIndexes = np.arange(0, len(eigenVectors)) 
+
+            axes[-2].scatter(eigenVectorsIndexes, locRatios, label="LocRatios")
+            axes[-2].set_title("Localization ratios of eigenvectors")
+            axes[-2].legend()
+
+            axes[-1].hist(singularValues, bins=100, label="QC", color="blue", density=True)
+            axes[-1].hist(shuffledSingularValues, bins=100, label="Random QC", color="red", density=True, alpha=0.5)
+            axes[-1].set_title("Singular values vs randomized singular values")
+            axes[-1].legend()
+
+            #axes[-0].hist(np.log10(eigenValues), bins=100, label="ESD", color="blue", density=True)
+            #axes[-0].hist(np.log10(shuffledEigenValues), bins=100, label="Random ESD", color="red", alpha=0.5, density=True) 
+            axes[-0].hist(eigenValues, bins=100, label="ESD", color="blue", density=True)
+            axes[-0].hist(shuffledEigenValues, bins=100, label="Random ESD", color="red", alpha=0.5, density=True) 
+            axes[-0].set_title("ESD vs randomized ESD")
+            axes[-0].legend()
+
+            if doShowAndClf:
+                plt.show()
+                plt.clf()        
+
+        # Now we need to find out the right amount of components and perform low rank decomposition   
+        if methodSelectComponents == "powerlaw_xmin":
+          if not doPlot:
+              # Get eigenvalues from matrix
+              eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
+
+          xmin = self.fit_powerlaw(eigenValues, plot=doPlot, savefig=False, ax = axes)[1]
+
+          nComponents = np.sum(eigenValues >= xmin) 
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:, eigenValues < xmin] = 0     
+          smoothedMatrix = U @ (dm @ Vt)
+
+          # Another method
+          #_, _, V = sp.sparse.linalg.svds(weightMatrix, nComponents, which = 'LM')
+          #V = V.T
+          #X = weightMatrix @ V
+          #smoothedMatrix = X @ V.T
+
+        elif methodSelectComponents == "powerlaw_spikes":
+
+          if not doPlot:
+              # Get eigenvalues from matrix
+              eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
+
+          powerlawSpikes = self.fit_powerlaw(eigenValues, plot=doPlot, savefig=False, ax = axes)[5]
+
+          nComponents = int(powerlawSpikes)  
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:,powerlawSpikes:weightMatrix.shape[0]] = 0     
+          smoothedMatrix = U @ (dm @ Vt)
+
+          # Another method
+          #_, _, V = sp.sparse.linalg.svds(weightMatrix, nComponents, which = 'LM')
+          #V = V.T
+          #X = weightMatrix @ V
+          #smoothedMatrix = X @ V.T
+
+        elif methodSelectComponents == "mp_spikes":
+
+          if not doPlot:
+              # Get eigenvalues from matrix
+              eigenValues = np.power(sp.linalg.svdvals(weightMatrix),2)
+
+          mpSpikes = self.mp_fit(eigenValues, weightMatrix.shape[0], weightMatrix.shape[1], 1,"", "", doPlot, False, "", "blue", False, ax = axes)[0]
+
+          nComponents = int(mpSpikes)  
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:,mpSpikes:weightMatrix.shape[0]] = 0     
+          smoothedMatrix = U @ (dm @ Vt)
+
+          # Another method
+          #_, _, V = sp.sparse.linalg.svds(weightMatrix, nComponents, which = 'LM')
+          #V = V.T
+          #X = weightMatrix @ V
+          #smoothedMatrix = X @ V.T
+
+        elif methodSelectComponents == "localization_ratio":
+          threshold = percent
+
+          if not doPlot:
+              # Get eigenvalues from matrix
+              eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
+              locRatios = [localization_ratio(ev) for ev in eigenVectors]
+
+          arrayLocRatios = np.array(locRatios)
+
+          nComponents = np.sum(arrayLocRatios <= np.percentile(arrayLocRatios, threshold))  
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:,arrayLocRatios > 240] = 0 # np.percentile(arrayLocRatios, threshold)] = 0     
+          smoothedMatrix = U @ (dm @ Vt)
+
+        elif methodSelectComponents == "vector_entropy":
+          threshold = percent
+
+          # Get eigenvalues from matrix
+          eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
+          vecEntropy = [vector_entropy(ev) for ev in eigenVectors]
+
+          arrayVecEntropy = np.array(vecEntropy)
+
+          nComponents = np.sum(arrayVecEntropy <= np.percentile(arrayVecEntropy, threshold))  
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:,arrayVecEntropy > np.percentile(arrayVecEntropy, threshold)] = 0     
+          smoothedMatrix = U @ (dm @ Vt)
+
+        elif methodSelectComponents == "participation_ratio":
+          threshold = percent
+
+          # Get eigenvalues from matrix
+          eigenValues, eigenVectors = np.linalg.eig(weightMatrix)            
+          partRatios = [participation_ratio(ev) for ev in eigenVectors]
+
+          arrayPartRatios = np.array(partRatios)
+
+          nComponents = np.sum(arrayPartRatios <= np.percentile(arrayPartRatios, threshold))  
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:,arrayPartRatios > np.percentile(arrayPartRatios, threshold)] = 0     
+          smoothedMatrix = U @ (dm @ Vt)
+
+        elif methodSelectComponents == "allComponents":
+
+          nComponents = weightMatrix.shape[0]  
+
+          # do truncated SVD for smoothing weights in matrix    
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          smoothedMatrix = U @ (dm @ Vt)
+
+          # Another method
+          #_, _, V = sp.sparse.linalg.svds(weightMatrix, nComponents, which = 'LM')
+          #V = V.T
+          #X = weightMatrix @ V
+          #smoothedMatrix = X @ V.T
+
+        elif methodSelectComponents == "RMT":
+
+          nComponents = 0  
+
+          smoothedMatrix = pyRMT.optimalShrinkage(weightMatrix) 
+
+        elif methodSelectComponents == "largeValues":
+
+          nComponents = np.sum(weightMatrix >= np.percentile(weightMatrix, 90))
+
+          weightMatrix[weightMatrix < np.percentile(weightMatrix, 90)] = 0
+
+          smoothedMatrix = weightMatrix
+
+        elif methodSelectComponents == "randomize_percentage":
+          if not doPlot:
+              # create shuffled version of unified matrix
+              matrix_as_vector = np.reshape(weightMatrix, weightMatrix.size)
+              indexes = np.arange(0,matrix_as_vector.size).tolist()
+              random.shuffle(indexes)
+              shuffledMatrix = np.reshape(matrix_as_vector[indexes], weightMatrix.shape)  
+
+          # learn how many singular values there are in the matrix
+          singularValues = shuffledMatrix.shape[0]
+
+          # decide how many components we are gonna use in the truncated SVD call based on the percentageKept parameter - typically 20%)
+          nComponents = np.int(np.round(percent * singularValues))
+          if nComponents < 1:
+              nComponents = 1
+
+          # do truncated SVD for smoothing weights in matrix
+          U, d, Vt = sp.linalg.svd(shuffledMatrix)
+          dm = sp.linalg.diagsvd(d, shuffledMatrix.shape[0],shuffledMatrix.shape[1])
+          dm[:,nComponents:shuffledMatrix.shape[0]] = 0
+          smoothedMatrix = U @ (dm @ Vt)
+
+          # Another method
+          #_, _, V = sp.sparse.linalg.svds(weightMatrix, nComponents, which = 'LM')
+          #V = V.T
+          #X = weightMatrix @ V
+          #smoothedMatrix = X @ V.T
+
+          # unshuffle smoothedMatrix  
+          smoothedMatrixAsVector = np.reshape(smoothedMatrix, smoothedMatrix.size)
+          reorderedVector = np.zeros(smoothedMatrixAsVector.size)
+          reorderedVector[indexes] = smoothedMatrixAsVector
+          smoothedMatrix = np.reshape(reorderedVector, smoothedMatrix.shape)
+
+        elif methodSelectComponents == "percentage":
+
+          # learn how many singular values there are in the matrix
+          singularValues = weightMatrix.shape[0]
+
+          # decide how many components we are gonna use in the truncated SVD call based on the percentageKept parameter - typically 20%)
+          nComponents = np.int(np.round(percent * singularValues))
+          if nComponents < 1:
+              nComponents = 1
+
+          # do truncated SVD for smoothing weights in matrix
+          print("Calculating singular matrix decomposition...")
+          U, d, Vt = sp.linalg.svd(weightMatrix)
+          dm = sp.linalg.diagsvd(d, weightMatrix.shape[0],weightMatrix.shape[1])
+          dm[:,nComponents:weightMatrix.shape[0]] = 0
+          smoothedMatrix = U @ (dm @ Vt)
+          print("Done")
+
+          # Another method
+          #_, _, V = sp.sparse.linalg.svds(weightMatrix, nComponents, which = 'LM')
+          #V = V.T
+          #X = weightMatrix @ V
+          #smoothedMatrix = X @ V.T
+
+        # ROAM THROUGH LAYERS, RESHAPE THE SMOOTHED STACKED MATRIX BACK INTO WEIGHT MATRICES
+        # for each "recovered" (reshaped) weight matrix, "unnormalize" using the previously saved std per weight matrix
+
+        #TODO: restrict to ww2x or intra
+        layer_iterator = self.make_layer_iterator(model=model, layers=layers, params=params)            
+
+        rowNumber = 0
+        columnNumber = 0
+
+        matrixNumber = 0
+
+        # iterate over layers        
+        for ww_layer in layer_iterator:
+            if not ww_layer.skipped and ww_layer.has_weights:
+                logger.info("LAYER: {} {}  : {}".format(ww_layer.layer_id, ww_layer.the_type, type(ww_layer.layer)))
+
+                layer = ww_layer.layer
+                layer_id = ww_layer.layer_id
+                layer_name = ww_layer.name
+                layer_type = ww_layer.the_type
+                framework = ww_layer.framework
+                channels = ww_layer.channels
+
+                # get the model weights and biases directly, converted to numpy arrays        
+                has_weights, weights, has_biases, biases = ww_layer.get_weights_and_biases()    
+
+                # iterate over weight matrices
+                if layer_type is LAYER_TYPE.CONV2D:
+
+                    kernelHeight = weights.shape[0]
+                    kernelWidth = weights.shape[1]
+
+                    for inputChannel in range(0,weights.shape[2]):
+
+                        for kernel in range(0,weights.shape[3]):
+
+                            weights[:,:,inputChannel,kernel] = np.multiply(smoothedMatrix[rowNumber:rowNumber + kernelHeight, columnNumber:columnNumber + kernelWidth], sd[matrixNumber])
+
+                            columnNumber += kernelWidth
+
+                            matrixNumber += 1
+                            
+                    rowNumber += kernelHeight
+
+                    columnNumber = 0
+
+                    if smoothBias and has_biases:
+
+                        biases = np.multiply(smoothedMatrix[rowNumber, columnNumber:biases.shape[0]], sd[matrixNumber])
+
+                        matrixNumber +=1
+
+                        rowNumber += 1
+
+                        columnNumber = 0
+
+                    self.replace_layer_weights(framework, layer_id, layer, weights, B=biases)
+
+                elif layer_type is LAYER_TYPE.DENSE:
+
+                    weightsHeight = weights.shape[0]
+                    weightsWidth = weights.shape[1]
+
+                    weights = np.multiply(smoothedMatrix[rowNumber:rowNumber + weightsHeight, columnNumber:columnNumber + weightsWidth], sd[matrixNumber])
+
+                    matrixNumber += 1
+
+                    rowNumber += 1
+
+                    columnNumber = 0
+
+                    if smoothBias and has_biases:
+
+                        biases = np.multiply(smoothedMatrix[rowNumber, columnNumber:biases.shape[0]], sd[matrixNumber])
+
+                        matrixNumber +=1
+
+                        rowNumber += 1
+
+                        columnNumber = 0
+
+                    self.replace_layer_weights(framework, layer_id, layer, weights, B=biases)
+
+        # if model was passed, then it's redundant to return smoothed model - since model was passed by reference, the model has already been smoothed. 
+        # If that's undesired, one should do a copy of the model before calling this method
+        return(model, 0)
